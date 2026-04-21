@@ -30,10 +30,29 @@ export default function RootLayout({
       className={`${nunito.variable} ${mono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <Header />
-        <main className="flex-1 max-w-6xl mx-auto px-4 py-8 w-full">
-          {children}
-        </main>
+        {/* Shown only on narrow viewports. The main layout is hidden
+            alongside it via the same breakpoint. */}
+        <div className="mobile-gate md:hidden min-h-screen flex items-center justify-center px-8 text-center bg-[#faf5e4]">
+          <div className="max-w-sm space-y-4">
+            <div className="text-5xl font-extrabold tracking-tight">
+              <span style={{ color: "#517d19" }}>catan</span>
+              <span style={{ color: "#f0ad00" }}>tracker</span>
+              <span style={{ color: "#4fa6eb" }}>.io</span>
+            </div>
+            <p className="text-lg font-semibold text-black leading-snug">
+              Only optimized for desktop.
+            </p>
+            <p className="text-sm text-muted">
+              Please open this site on a larger screen.
+            </p>
+          </div>
+        </div>
+        <div className="hidden md:flex flex-1 flex-col">
+          <Header />
+          <main className="flex-1 max-w-6xl mx-auto px-4 py-8 w-full">
+            {children}
+          </main>
+        </div>
       </body>
     </html>
   );
