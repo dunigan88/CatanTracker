@@ -1,0 +1,928 @@
+---
+title: "Colonist Replay Analysis"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    fig-width: 11
+    fig-height: 6.5
+    fig-dpi: 150
+    theme: cosmo
+    embed-resources: true
+    include-in-header:
+      text: |
+        <style>
+          /* Smooth fade + bounce when a new panel-tabset pane becomes active */
+          .panel-tabset .tab-content .tab-pane.active {
+            animation: dotsArrive 0.9s cubic-bezier(0.2, 0.8, 0.2, 1);
+          }
+          @keyframes dotsArrive {
+            0%   { opacity: 0; transform: translateY(-18px) scale(0.96); filter: blur(4px); }
+            45%  { opacity: 0.75; transform: translateY(8px) scale(1.01); filter: blur(1px); }
+            75%  { opacity: 0.95; transform: translateY(-2px) scale(1.002); filter: blur(0); }
+            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+          }
+          /* Slight stagger for images inside tabs so dots look like they "fly in" */
+          .panel-tabset .tab-pane.active .cell-output-display img {
+            animation: imgPop 1.05s cubic-bezier(0.25, 1, 0.3, 1);
+          }
+          @keyframes imgPop {
+            0%   { opacity: 0; transform: scale(0.85) translateY(10px); }
+            60%  { opacity: 0.9; transform: scale(1.015) translateY(-2px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+          }
+          /* Tab buttons pop a little when selected */
+          .nav-tabs .nav-link.active {
+            transition: transform 180ms ease, color 180ms ease;
+            transform: translateY(-1px);
+          }
+        </style>
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+library(scales)
+library(ggrepel)
+library(ggimage)
+library(gt)
+library(reactable)
+library(htmltools)
+
+setwd(here::here())
+source("analysis/load_replays.R")
+d <- load_all()
+
+# Colors
+RESOURCE_COLORS <- c(
+  lumber = "#517d19",
+  brick  = "#9c4300",
+  wool   = "#F2EBD8",
+  grain  = "#f0ad00",
+  ore    = "#7b6f83",
+  desert = "#cccccc"
+)
+NON_RESOURCE_COLOR <- "#4fa6eb"   # for dice, activity, anything not tied to a resource
+HIGHLIGHT_COLOR    <- "#9c4300"   # for callouts (e.g. 7s, red numbers)
+
+RESOURCE_LEVELS <- c("lumber", "brick", "wool", "grain", "ore")
+
+RESOURCE_IMAGES <- c(
+  lumber = here::here("images", "lumber.png"),
+  brick  = here::here("images", "brick.png"),
+  wool   = here::here("images", "sheep.png"),
+  grain  = here::here("images", "wheat.png"),
+  ore    = here::here("images", "ore.png")
+)
+
+BAR_BORDER   <- "black"
+BAR_LW       <- 0.8
+AXIS_LW      <- 1.6
+POINT_STROKE <- 1.1
+
+theme_colonist <- function(base_size = 13) {
+  theme_minimal(base_size = base_size, base_family = "Helvetica") +
+    theme(
+      text               = element_text(face = "bold", color = "gray12"),
+      plot.title         = element_text(face = "bold", size = rel(1.4), margin = margin(b = 4)),
+      plot.subtitle      = element_text(face = "bold", color = "gray30", margin = margin(b = 14)),
+      plot.caption       = element_text(face = "plain", color = "gray55",
+                                        size = rel(0.78), margin = margin(t = 10)),
+      plot.title.position   = "plot",
+      plot.caption.position = "plot",
+      axis.title         = element_text(face = "bold", color = "gray15"),
+      axis.title.x       = element_text(margin = margin(t = 10)),
+      axis.title.y       = element_text(margin = margin(r = 10)),
+      axis.text          = element_text(face = "bold", color = "gray20"),
+      axis.line.x        = element_line(color = "black", linewidth = AXIS_LW),
+      axis.line.y        = element_line(color = "black", linewidth = AXIS_LW),
+      axis.ticks         = element_line(color = "black", linewidth = 1),
+      axis.ticks.length  = unit(5, "pt"),
+      panel.grid.minor   = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(color = "gray90", linewidth = 0.4),
+      strip.text         = element_text(face = "bold", size = rel(1.0)),
+      legend.position    = "top",
+      legend.title       = element_text(face = "bold"),
+      legend.text        = element_text(face = "bold"),
+      legend.key.width   = unit(18, "pt")
+    )
+}
+```
+
+```{r headline}
+n_games <- nrow(d$games)
+n_players <- length(unique(d$rosters$username))
+```
+
+*Based on **`r n_games` games** and **`r n_players` players** in `replays/`.*
+
+## Player Data
+
+Switch between totals across all games and per-game averages. Every column is sortable — click any header.
+
+```{r player-data-prep}
+# Per-game sums of cards lost to 7 rolls (from seven_discards event table)
+seven_losses <- d$seven_discards |>
+  group_by(game_id, player_color) |>
+  summarise(cards_lost_to_7 = sum(n_cards, na.rm = TRUE), .groups = "drop")
+
+player_totals <- d$player_stats |>
+  left_join(seven_losses, by = c("game_id", "player_color")) |>
+  mutate(cards_lost_to_7 = coalesce(cards_lost_to_7, 0L)) |>
+  group_by(username) |>
+  summarise(
+    games                = n(),
+    dev_cards_bought     = sum(dev_cards_bought),
+    dev_cards_played     = sum(dev_cards_used),
+    roads                = sum(built_road),
+    settlements          = sum(built_settlement, na.rm = TRUE),
+    cities               = sum(built_city, na.rm = TRUE),
+    trades_proposed      = sum(proposed_trades),
+    trades_accepted      = sum(successful_trades),
+    bank_trades          = sum(n_bank_trades),
+    times_robbed_others  = sum(n_steals_done),
+    resources_blocked    = sum(resource_income_blocked),
+    cards_lost_to_7      = sum(cards_lost_to_7),
+    resources_used       = sum(resources_used),
+    cards_from_rolls     = sum(gained_total),
+    .groups = "drop"
+  ) |>
+  mutate(trade_completion_rate = ifelse(trades_proposed > 0,
+                                        trades_accepted / trades_proposed,
+                                        NA_real_)) |>
+  relocate(trade_completion_rate, .after = trades_accepted) |>
+  arrange(desc(resources_used))
+
+player_per_game <- player_totals |>
+  mutate(across(
+    -c(username, games, trade_completion_rate),
+    ~ round(.x / games, 1)
+  ))
+
+metric_labels <- c(
+  username              = "Player",
+  games                 = "Games",
+  dev_cards_bought      = "Dev Cards Bought",
+  dev_cards_played      = "Dev Cards Played",
+  roads                 = "Roads",
+  settlements           = "Settlements",
+  cities                = "Cities",
+  trades_proposed       = "Trades Proposed",
+  trades_accepted       = "Trades Accepted",
+  trade_completion_rate = "Trade Completion Rate",
+  bank_trades           = "Bank Trades",
+  times_robbed_others   = "Times Robbed Others",
+  resources_blocked     = "Resources Blocked by Robber",
+  cards_lost_to_7       = "Cards Lost to 7",
+  resources_used        = "Resources Used",
+  cards_from_rolls      = "Cards From Rolls"
+)
+
+make_player_table <- function(df, grey_one_game = FALSE) {
+  col_defs <- lapply(names(metric_labels), function(col) {
+    if (col == "username") {
+      colDef(name = metric_labels[[col]], minWidth = 120, sticky = "left",
+             style = list(fontWeight = "bold"))
+    } else if (col == "games") {
+      colDef(name = metric_labels[[col]], align = "center", minWidth = 70)
+    } else if (col == "trade_completion_rate") {
+      colDef(
+        name = metric_labels[[col]],
+        align = "center", minWidth = 110,
+        format = colFormat(percent = TRUE, digits = 0),
+        style = function(value, index) {
+          if (grey_one_game && df$games[index] <= 1) {
+            return(list(background = "#d9d9d9", color = "#666", fontStyle = "italic"))
+          }
+          if (is.na(value)) return(NULL)
+          list(background = sprintf("rgba(81, 125, 25, %s)",
+                                    round(min(value, 1) * 0.45, 2)))
+        }
+      )
+    } else {
+      colDef(
+        name = metric_labels[[col]],
+        align = "center", minWidth = 95,
+        style = function(value, index) {
+          if (grey_one_game && df$games[index] <= 1) {
+            return(list(background = "#d9d9d9", color = "#666", fontStyle = "italic"))
+          }
+          max_val <- max(df[[col]][df$games > 1], na.rm = TRUE)
+          if (!is.finite(max_val) || max_val <= 0) return(NULL)
+          frac <- min(value / max_val, 1)
+          list(background = sprintf("rgba(81, 125, 25, %s)", round(frac * 0.45, 2)))
+        }
+      )
+    }
+  })
+  names(col_defs) <- names(metric_labels)
+  reactable(
+    df,
+    columns = col_defs,
+    defaultSorted = list(resources_used = "desc"),
+    sortable = TRUE,
+    striped = TRUE,
+    compact = TRUE,
+    highlight = TRUE,
+    bordered = TRUE,
+    defaultPageSize = 20,
+    theme = reactableTheme(
+      headerStyle = list(fontWeight = "bold", background = "#f7f7f7"),
+      style = list(fontFamily = "Helvetica")
+    )
+  )
+}
+```
+
+::: {.panel-tabset}
+
+## Total
+
+```{r player-table-total}
+make_player_table(player_totals, grey_one_game = FALSE)
+```
+
+## Per Game
+
+```{r player-table-per-game}
+make_player_table(player_per_game, grey_one_game = TRUE)
+```
+
+:::
+
+**Column meanings**
+
+- **Trades Proposed** = trade offers this player put out
+- **Trades Accepted** = offers this player **proposed that someone else accepted** (NOT trades where they were on the accepting side)
+- **Trade Completion Rate** = Trades Accepted / Trades Proposed (percentage of their offers that closed)
+- **Bank Trades** = 4:1 / 3:1 / 2:1 port trades with the bank
+- **Times Robbed Others** = times this player placed the robber and pulled a card from an opponent
+- **Resources Blocked by Robber** = times one of this player's tiles would have produced, but the robber was on it
+- **Cards Lost to 7** = total cards discarded on 7-rolls (when hand exceeded the discard limit)
+- **Resources Used** = cards spent on builds, dev cards, and trades (Colonist's own `resourcesUsed`)
+- **Cards From Rolls** = total resource cards received from dice rolls
+- Players with only **1 game** show greyed cells in the Per Game view since the average is just the single-game total
+
+## Overall average price per resource
+
+"Going rate" for each resource, pooled across every completed player-to-player trade. Only trades where the requested side was a single uniform resource are counted.
+
+```{r price-overall, fig.height=5}
+p2p_prices <- d$trades_accepted |>
+  mutate(
+    n_given = lengths(given),
+    n_received = lengths(received),
+    received_uniform = map_chr(received_names, ~ {
+      if (length(.x) == 0 || length(unique(.x)) > 1) NA_character_ else .x[1]
+    }),
+    price = n_given / n_received
+  ) |>
+  filter(!is.na(received_uniform), price > 0)
+
+overall_prices <- p2p_prices |>
+  group_by(resource = received_uniform) |>
+  summarise(avg_price = mean(price), n_trades = n(), .groups = "drop") |>
+  mutate(
+    resource = factor(resource, levels = RESOURCE_LEVELS),
+    image = RESOURCE_IMAGES[as.character(resource)]
+  ) |>
+  arrange(avg_price)
+
+ymax <- max(overall_prices$avg_price)
+
+ggplot(overall_prices,
+       aes(x = reorder(resource, avg_price), y = avg_price)) +
+  # place image on the left of each bar (axis side), outside bar area
+  geom_col(aes(fill = resource),
+           width = 0.65, color = BAR_BORDER, linewidth = BAR_LW) +
+  geom_image(aes(image = image, y = -ymax * 0.08),
+             size = 0.11, by = "width", asp = 2.0) +
+  geom_text(aes(label = sprintf("%.2f (n=%d)", avg_price, n_trades)),
+            hjust = -0.15, color = "gray15",
+            size = 4.2, fontface = "bold") +
+  coord_flip(clip = "off") +
+  scale_fill_manual(values = RESOURCE_COLORS, guide = "none") +
+  scale_y_continuous(expand = expansion(mult = c(0.12, 0.25)),
+                     limits = c(-ymax * 0.10, NA)) +
+  labs(title = "Overall average price per resource",
+       subtitle = "Pooled across every completed P2P trade",
+       x = NULL, y = "Cards given per card received") +
+  theme_colonist() +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    plot.margin = margin(10, 20, 10, 40)
+  )
+```
+
+## Where players put their initial settlements
+
+### Resources adjacent to initial settlements
+
+Use the tabs to switch between the combined view and individual players. How often each resource touches a 1st vs 2nd starting settlement.
+
+```{r initial-resources-setup}
+initial_tiles_named <- d$settlement_tiles |>
+  filter(is_initial, resource != "desert") |>
+  left_join(d$rosters |> select(game_id, player_color, username),
+            by = c("game_id", "player_color"))
+
+plot_initial_resources <- function(data, title_suffix) {
+  if (nrow(data) == 0) {
+    return(ggplot() + theme_void() +
+             labs(title = paste0("Resource adjacency -- ", title_suffix),
+                  subtitle = "No data"))
+  }
+  d2 <- data |>
+    count(placement_order, resource, name = "count") |>
+    group_by(placement_order) |>
+    mutate(
+      share = count / sum(count),
+      resource = factor(resource, levels = RESOURCE_LEVELS),
+      image = RESOURCE_IMAGES[as.character(resource)],
+      placement_label = ifelse(placement_order == 1,
+                               "1st settlement", "2nd settlement")
+    ) |>
+    ungroup()
+
+  ymax <- max(d2$count)
+
+  ggplot(d2, aes(x = resource, y = count, fill = resource)) +
+    geom_col(width = 0.7, color = BAR_BORDER, linewidth = BAR_LW) +
+    geom_text(aes(label = sprintf("%d\n(%.0f%%)", count, share * 100)),
+              vjust = -0.3, size = 3.8, fontface = "bold", color = "gray15",
+              lineheight = 0.9) +
+    geom_image(aes(image = image, y = -ymax * 0.08),
+               size = 0.11, by = "width", asp = 2.0) +
+    scale_fill_manual(values = RESOURCE_COLORS, guide = "none") +
+    scale_y_continuous(expand = expansion(mult = c(0.10, 0.20))) +
+    facet_wrap(~ placement_label) +
+    labs(
+      title = paste0("Resource adjacency of initial settlements -- ", title_suffix),
+      subtitle = "How often each resource touches a 1st / 2nd settlement",
+      x = NULL, y = "Times adjacent"
+    ) +
+    theme_colonist() +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      panel.grid.major.y = element_line(color = "gray90", linewidth = 0.4)
+    )
+}
+```
+
+```{r initial-resources-tabs, results='asis', fig.height=5.2, fig.width=10}
+players_init <- sort(unique(initial_tiles_named$username))
+cat("::: {.panel-tabset}\n\n")
+cat("## Combined\n\n")
+print(plot_initial_resources(initial_tiles_named, "all players"))
+cat("\n\n")
+for (p in players_init) {
+  cat("## ", p, "\n\n", sep = "")
+  print(plot_initial_resources(
+    initial_tiles_named |> filter(username == p), p))
+  cat("\n\n")
+}
+cat(":::\n")
+```
+
+### Dice numbers touched by initial settlements
+
+```{r initial-dice-bar, fig.height=5}
+dice_touched <- d$settlement_tiles |>
+  filter(is_initial, !is.na(dice_number), dice_number > 0) |>
+  count(placement_order, dice_number, name = "count") |>
+  mutate(
+    placement_label = ifelse(placement_order == 1,
+                             "1st settlement", "2nd settlement"),
+    is_red = dice_number %in% c(6L, 8L)
+  )
+
+ggplot(dice_touched,
+       aes(x = factor(dice_number), y = count, fill = is_red)) +
+  geom_col(width = 0.72, color = BAR_BORDER, linewidth = BAR_LW) +
+  geom_text(aes(label = count), vjust = -0.4,
+            size = 3.8, fontface = "bold", color = "gray15") +
+  scale_fill_manual(values = c("TRUE" = "#2770a8", "FALSE" = NON_RESOURCE_COLOR),
+                    guide = "none") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  facet_wrap(~ placement_label) +
+  labs(
+    title = "Dice numbers of initial settlement tiles",
+    subtitle = "How often each number is adjacent to a starting settlement (6 and 8 darker)",
+    x = "Tile number", y = "Times adjacent"
+  ) +
+  theme_colonist()
+```
+
+### Expected production per settlement
+
+Each settlement's "expected production" scores its adjacent tiles by how often they'd produce on a roll (6/8 = 5, 5/9 = 4, 4/10 = 3, 3/11 = 2, 2/12 = 1) and sums across adjacent tiles. Max possible = 15 (three 6/8 tiles). Shown for the 1st through 4th settlements each player places. Use the tabs to view one player at a time; the grey bar in each player tab is the overall mean for comparison.
+
+```{r expected-prod-data}
+placements_1_4 <- d$settlement_tiles |>
+  filter(placement_order <= 4, !is.na(pips)) |>
+  group_by(game_id, player_color, corner_id, placement_order) |>
+  summarise(
+    expected_prod = sum(pips, na.rm = TRUE),
+    n_tiles = n(),
+    .groups = "drop"
+  ) |>
+  mutate(placement_label = factor(
+    paste0(
+      placement_order,
+      c("st", "nd", "rd", "th")[pmin(placement_order, 4)],
+      " settlement"
+    ),
+    levels = c("1st settlement", "2nd settlement",
+               "3rd settlement", "4th settlement")
+  ))
+
+# Join player usernames for per-player breakdown
+placements_with_name <- placements_1_4 |>
+  left_join(d$rosters |> select(game_id, player_color, username),
+            by = c("game_id", "player_color"))
+
+# Colors for settlement order — distinct palette, not resource-themed
+SETTLEMENT_PAL <- c(
+  "1st settlement" = "#3b6cb1",
+  "2nd settlement" = "#d97a3e",
+  "3rd settlement" = "#6aa15d",
+  "4th settlement" = "#a54878"
+)
+
+# Overall means per settlement order (used as grey reference line in player tabs)
+overall_means <- placements_1_4 |>
+  group_by(placement_label) |>
+  summarise(overall_mean = mean(expected_prod), .groups = "drop")
+```
+
+```{r expected-prod-player-fn}
+plot_expected_prod <- function(data, title_suffix, show_overall = FALSE) {
+  if (nrow(data) == 0) {
+    return(ggplot() + theme_void() +
+           labs(title = paste0("Expected production -- ", title_suffix),
+                subtitle = "No data"))
+  }
+
+  # Per-group stats: mean to label, max to position the label
+  group_stats <- data |>
+    group_by(placement_label) |>
+    summarise(
+      mean_val = mean(expected_prod),
+      max_val  = max(expected_prod),
+      .groups = "drop"
+    )
+
+  y_ceiling <- 17  # extra room for mean label above topmost dot
+
+  p <- ggplot(data, aes(x = placement_label, y = expected_prod))
+
+  # Grey overall-mean bar behind the player's jitter (only in player tabs)
+  if (show_overall) {
+    p <- p +
+      geom_crossbar(
+        data = overall_means,
+        aes(x = placement_label, y = overall_mean,
+            ymin = overall_mean, ymax = overall_mean),
+        color = "gray55", linewidth = 1.0, width = 0.55,
+        inherit.aes = FALSE
+      )
+  }
+
+  p +
+    geom_jitter(
+      aes(fill = placement_label),
+      width = 0.18, height = 0.05,
+      shape = 21, size = 4, stroke = POINT_STROKE,
+      color = "black", alpha = 0.9
+    ) +
+    stat_summary(fun = mean, geom = "crossbar", width = 0.45,
+                 color = "black", linewidth = 1.0, fill = NA) +
+    geom_text(
+      data = group_stats,
+      aes(x = placement_label, y = max_val + 1.5,
+          label = sprintf("mean = %.1f", mean_val)),
+      fontface = "bold", color = "black", size = 4.4,
+      inherit.aes = FALSE
+    ) +
+    scale_fill_manual(values = SETTLEMENT_PAL, guide = "none") +
+    scale_y_continuous(breaks = seq(0, 15, 3),
+                       limits = c(0, y_ceiling)) +
+    labs(
+      title = paste0("Expected production per settlement -- ", title_suffix),
+      subtitle = "Sum across adjacent tiles (bar = mean; grey bar in player tabs = overall mean)",
+      x = NULL, y = "Expected production"
+    ) +
+    theme_colonist() +
+    theme(axis.text.x = element_text(size = rel(1.05)))
+}
+```
+
+```{r expected-prod-player-tabs, results='asis', fig.height=4.8, fig.width=9.5}
+players <- sort(unique(placements_with_name$username))
+cat("::: {.panel-tabset}\n\n")
+
+cat("## Combined\n\n")
+print(plot_expected_prod(placements_with_name, "all players",
+                         show_overall = FALSE))
+cat("\n\n")
+
+for (p in players) {
+  cat("## ", p, "\n\n", sep = "")
+  print(plot_expected_prod(
+    placements_with_name |> filter(username == p),
+    p,
+    show_overall = TRUE
+  ))
+  cat("\n\n")
+}
+cat(":::\n")
+```
+
+## Dice distribution (pooled)
+
+```{r dice-pooled, fig.height=4.8}
+pooled_dice <- d$dice_histogram |>
+  group_by(total) |>
+  summarise(count = sum(count), .groups = "drop") |>
+  mutate(is_seven = total == 7)
+
+ggplot(pooled_dice, aes(x = factor(total), y = count, fill = is_seven)) +
+  geom_col(width = 0.78, color = BAR_BORDER, linewidth = BAR_LW) +
+  geom_text(aes(label = count), vjust = -0.4,
+            size = 4, fontface = "bold", color = "gray15") +
+  scale_fill_manual(values = c("TRUE" = HIGHLIGHT_COLOR, "FALSE" = NON_RESOURCE_COLOR),
+                    guide = "none") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(title = "Dice rolls across all games",
+       subtitle = "Frequency of each total (7s highlighted)",
+       x = "Roll total", y = "Times rolled") +
+  theme_colonist()
+```
+
+## Victory points over turns
+
+One tab per game. Each line traces a player's VP (settlements, cities, longest road, largest army, and any known dev-card VPs) turn by turn. Hidden VP dev cards that the server keeps private won't show up until they're played or the game ends.
+
+```{r vp-timeline-setup}
+vp_named <- d$vp_timeline |>
+  left_join(d$rosters |> select(game_id, player_color, username),
+            by = c("game_id", "player_color"))
+
+# Colonist in-game color convention: red / blue / green / orange by color index
+COLONIST_COLORS <- c(
+  "1" = "#d23b3b",
+  "2" = "#3b6cb1",
+  "3" = "#5aa86a",
+  "4" = "#e07a3e"
+)
+
+plot_vp_timeline <- function(gid) {
+  data <- vp_named |> filter(game_id == gid) |> arrange(turn)
+  if (nrow(data) == 0) return(ggplot() + theme_void())
+  meta <- d$games |> filter(game_id == gid)
+  subtitle_date <- if (nrow(meta) && !is.na(meta$start_time[1])) {
+    format(meta$start_time[1], "%b %d, %Y")
+  } else ""
+  vp_to_win <- if (nrow(meta)) meta$vp_to_win[1] else 10L
+
+  visible_raw <- data |> filter(!is_final)
+  final_row   <- data |> filter(is_final)
+
+  # True final VP breakdown per player from endGameState.
+  # hidden VP cards = exactly the count of type 2 entries (each = 1 VP).
+  # Everything else (settlements, cities, longest road, largest army) is
+  # publicly visible and should be on the SOLID step line.
+  standings_vp <- d$standings |>
+    filter(game_id == gid) |>
+    mutate(
+      vp_cards = purrr::map_int(vp_breakdown, function(vp) {
+        val <- vp[["2"]]
+        if (is.null(val)) 0L else as.integer(val)
+      }),
+      public_final = vp_total - vp_cards
+    ) |>
+    select(player_color, public_final, vp_cards)
+
+  # Extend the visible step line so it ends at the *true* public final
+  # (captures any late longest-road / largest-army / winning-turn builds
+  # that happened after the last turn boundary snapshot).
+  last_visible_turn <- max(visible_raw$turn)
+  public_end <- visible_raw |>
+    distinct(game_id, player_color, username) |>
+    left_join(standings_vp |> select(player_color, public_final),
+              by = "player_color") |>
+    mutate(turn = last_visible_turn + 1L,
+           vp_total = coalesce(public_final, 0L)) |>
+    select(game_id, player_color, username, turn, vp_total)
+
+  visible_data <- bind_rows(visible_raw |> select(game_id, player_color,
+                                                  username, turn, vp_total),
+                            public_end) |>
+    arrange(player_color, turn)
+
+  # Reveal step: dotted from public_final to full weighted VP, shifted a tick to the right
+  reveal_turn_x <- last_visible_turn + 2L
+  reveal_info <- final_row |>
+    left_join(standings_vp, by = "player_color") |>
+    mutate(
+      turn = reveal_turn_x,
+      last_visible_vp = public_final,
+      hidden_vp = vp_cards,  # Only VP dev cards are truly hidden
+      reveal_label = ifelse(hidden_vp > 0,
+                            sprintf("%s (%d VP)  [+%d hidden VP cards]",
+                                    username, vp_total, hidden_vp),
+                            sprintf("%s (%d VP)", username, vp_total))
+    )
+
+  # Turns in the lead (public VP, ties share). Based on visible_raw only
+  # (turn-boundary snapshots during play).
+  lead_counts <- visible_raw |>
+    group_by(turn) |>
+    mutate(is_leader = vp_total == max(vp_total)) |>
+    ungroup() |>
+    group_by(player_color, username) |>
+    summarise(turns_led = sum(is_leader), .groups = "drop")
+
+  winner_color <- d$standings |>
+    filter(game_id == gid, won) |>
+    pull(player_color) |>
+    first() %or% NA_integer_
+
+  lead_table <- lead_counts |>
+    mutate(is_winner = player_color == winner_color) |>
+    arrange(desc(turns_led), desc(is_winner))
+
+  # Axis bounds. Leave headroom at the top for the leaderboard box.
+  y_max_data <- max(data$vp_total, vp_to_win)
+  y_ceiling <- y_max_data + 4.5
+  x_min <- min(visible_raw$turn)
+  x_max <- max(visible_raw$turn)
+  x_range <- max(x_max - x_min, 1L)
+
+  # Leaderboard box geometry
+  box_header_h <- 0.9
+  box_row_h    <- 0.95
+  n_rows       <- nrow(lead_table)
+  box_top      <- y_ceiling - 0.3
+  box_bottom   <- box_top - box_header_h - n_rows * box_row_h - 0.4
+  box_left     <- x_min - x_range * 0.01
+  box_right    <- x_min + x_range * 0.30
+
+  lead_table_pos <- lead_table |>
+    mutate(
+      row = row_number(),
+      y_pos = box_top - box_header_h - (row - 0.5) * box_row_h,
+      # W- prefix for winner (renders reliably everywhere, unlike Unicode crowns)
+      prefix = ifelse(is_winner, "W - ", "    "),
+      label = sprintf("%s%s: %d", prefix, username, turns_led)
+    )
+
+  ggplot(visible_data,
+         aes(x = turn, y = vp_total,
+             color = factor(player_color), group = player_color)) +
+    # Dashed "win" line
+    geom_hline(yintercept = vp_to_win, linetype = "dashed",
+               color = "gray70", linewidth = 0.6) +
+    annotate("text", x = x_max, y = vp_to_win + 0.3,
+             label = paste0("win = ", vp_to_win, " VP"),
+             hjust = 1, color = "gray45", fontface = "bold", size = 3.4) +
+    # Grey panel behind the leaderboard
+    annotate("rect",
+             xmin = box_left, xmax = box_right,
+             ymin = box_bottom, ymax = box_top,
+             fill = "gray90", color = "gray25", linewidth = 0.9,
+             alpha = 0.95) +
+    # Leaderboard header
+    annotate("text",
+             x = (box_left + box_right) / 2, y = box_top - box_header_h / 2,
+             label = "Turns in lead",
+             hjust = 0.5, vjust = 0.5,
+             fontface = "bold", size = 4.3, color = "gray15") +
+    # Separator under header
+    annotate("segment",
+             x = box_left + x_range * 0.015, xend = box_right - x_range * 0.015,
+             y = box_top - box_header_h, yend = box_top - box_header_h,
+             color = "gray45", linewidth = 0.6) +
+    # Leaderboard rows
+    geom_text(
+      data = lead_table_pos,
+      aes(x = box_left + x_range * 0.015, y = y_pos, label = label,
+          color = factor(player_color)),
+      hjust = 0, fontface = "bold", size = 3.9,
+      inherit.aes = FALSE
+    ) +
+    geom_step(linewidth = 1.5, direction = "hv", alpha = 0.95) +
+    # Dotted reveal segment from true public final to full weighted final
+    geom_segment(
+      data = reveal_info,
+      aes(x = last_visible_turn + 1L, xend = turn,
+          y = last_visible_vp, yend = vp_total,
+          color = factor(player_color)),
+      linetype = "dotted", linewidth = 1.2, inherit.aes = FALSE
+    ) +
+    geom_point(data = reveal_info,
+               aes(x = turn, y = vp_total, color = factor(player_color)),
+               shape = 21, size = 5, stroke = POINT_STROKE,
+               fill = "white", inherit.aes = FALSE) +
+    ggrepel::geom_text_repel(
+      data = reveal_info,
+      aes(x = turn, y = vp_total, color = factor(player_color),
+          label = reveal_label),
+      hjust = 0, direction = "y", nudge_x = 2.5,
+      box.padding = 0.9, point.padding = 0.5,
+      force = 5, force_pull = 0.2, max.overlaps = Inf,
+      fontface = "bold", size = 3.8,
+      segment.color = "gray70", segment.linewidth = 0.5,
+      segment.linetype = "dotted", min.segment.length = 0,
+      show.legend = FALSE, inherit.aes = FALSE
+    ) +
+    scale_color_manual(values = COLONIST_COLORS, guide = "none") +
+    scale_x_continuous(expand = expansion(mult = c(0.02, 0.28)),
+                       breaks = pretty_breaks(8)) +
+    scale_y_continuous(breaks = seq(0, 15, 2),
+                       limits = c(0, y_ceiling)) +
+    labs(
+      title = paste0("Victory points over turns"),
+      subtitle = paste0(subtitle_date,
+                        " | dotted tail = hidden VP dev cards revealed at game end"),
+      x = "Completed turns", y = "Victory points"
+    ) +
+    theme_colonist()
+}
+```
+
+```{r resource-prod-fn}
+plot_resource_timeline <- function(gid) {
+  data <- d$resource_gains |>
+    filter(game_id == gid) |>
+    count(game_id, player_color, turn, name = "cards") |>
+    left_join(d$rosters |> select(game_id, player_color, username),
+              by = c("game_id", "player_color")) |>
+    group_by(game_id, player_color, username) |>
+    arrange(turn) |>
+    mutate(cumulative = cumsum(cards)) |>
+    ungroup()
+
+  if (nrow(data) == 0) return(ggplot() + theme_void())
+
+  # Extend each player's line to the game's final turn so they all end together
+  max_turn <- max(data$turn, na.rm = TRUE)
+  tail_rows <- data |>
+    group_by(player_color, username) |>
+    slice_max(turn, n = 1, with_ties = FALSE) |>
+    ungroup() |>
+    filter(turn < max_turn) |>
+    mutate(turn = max_turn)
+  data <- bind_rows(data, tail_rows) |> arrange(player_color, turn)
+
+  endpoints <- data |>
+    group_by(player_color, username) |>
+    slice_max(turn, n = 1, with_ties = FALSE) |>
+    ungroup()
+
+  # Turns as resource leader — for each turn that has data for any player,
+  # anyone tied at the max cumulative total gets credit (ties share).
+  turns_seq <- seq_len(max_turn)
+  all_players <- endpoints |> select(player_color, username)
+
+  # Carry-forward cumulative for each player across every turn (step line values)
+  ff <- all_players |>
+    tidyr::crossing(turn = turns_seq) |>
+    left_join(data |> select(player_color, turn, cumulative),
+              by = c("player_color", "turn")) |>
+    group_by(player_color) |>
+    arrange(turn) |>
+    mutate(cumulative = cumulative |>
+             {\(x) { z <- x; for (k in seq_along(z)) if (is.na(z[k])) z[k] <- if (k > 1) z[k-1] else 0L; z }}()) |>
+    ungroup()
+
+  lead_counts_r <- ff |>
+    group_by(turn) |>
+    mutate(is_leader = cumulative == max(cumulative) & cumulative > 0) |>
+    ungroup() |>
+    group_by(player_color, username) |>
+    summarise(turns_led = sum(is_leader), .groups = "drop")
+
+  winner_color <- d$standings |>
+    filter(game_id == gid, won) |>
+    pull(player_color) |>
+    first() %or% NA_integer_
+
+  lead_table <- lead_counts_r |>
+    mutate(is_winner = player_color == winner_color) |>
+    arrange(desc(turns_led), desc(is_winner))
+
+  # Layout
+  y_max_data <- max(data$cumulative, na.rm = TRUE)
+  y_ceiling  <- y_max_data + y_max_data * 0.35
+  x_min      <- min(data$turn)
+  x_max      <- max(data$turn)
+  x_range    <- max(x_max - x_min, 1L)
+
+  box_header_h <- y_ceiling * 0.07
+  box_row_h    <- y_ceiling * 0.072
+  n_rows       <- nrow(lead_table)
+  box_top      <- y_ceiling - y_ceiling * 0.02
+  box_bottom   <- box_top - box_header_h - n_rows * box_row_h - y_ceiling * 0.025
+  box_left     <- x_min - x_range * 0.01
+  box_right    <- x_min + x_range * 0.32
+
+  lead_table_pos <- lead_table |>
+    mutate(
+      row = row_number(),
+      y_pos = box_top - box_header_h - (row - 0.5) * box_row_h,
+      prefix = ifelse(is_winner, "W - ", "    "),
+      label = sprintf("%s%s: %d", prefix, username, turns_led)
+    )
+
+  ggplot(data, aes(x = turn, y = cumulative,
+                   color = factor(player_color), group = player_color)) +
+    geom_step(linewidth = 1.5, direction = "hv", alpha = 0.95) +
+    geom_point(data = endpoints,
+               shape = 21, size = 5, stroke = POINT_STROKE,
+               fill = "white") +
+    ggrepel::geom_text_repel(
+      data = endpoints,
+      aes(label = sprintf("%s (%d)", username, cumulative)),
+      hjust = 0, direction = "y", nudge_x = 2.5,
+      box.padding = 0.8, point.padding = 0.5,
+      force = 5, force_pull = 0.2, max.overlaps = Inf,
+      fontface = "bold", size = 3.9,
+      segment.color = "gray70", segment.linewidth = 0.5,
+      segment.linetype = "dotted", min.segment.length = 0,
+      show.legend = FALSE
+    ) +
+    # Grey panel for "turns as resource leader"
+    annotate("rect",
+             xmin = box_left, xmax = box_right,
+             ymin = box_bottom, ymax = box_top,
+             fill = "gray90", color = "gray25", linewidth = 0.9,
+             alpha = 0.95) +
+    annotate("text",
+             x = (box_left + box_right) / 2,
+             y = box_top - box_header_h / 2,
+             label = "Turns as resource leader",
+             hjust = 0.5, vjust = 0.5,
+             fontface = "bold", size = 4.1, color = "gray15") +
+    annotate("segment",
+             x = box_left + x_range * 0.015,
+             xend = box_right - x_range * 0.015,
+             y = box_top - box_header_h,
+             yend = box_top - box_header_h,
+             color = "gray45", linewidth = 0.6) +
+    geom_text(
+      data = lead_table_pos,
+      aes(x = box_left + x_range * 0.015, y = y_pos, label = label,
+          color = factor(player_color)),
+      hjust = 0, fontface = "bold", size = 3.9,
+      inherit.aes = FALSE
+    ) +
+    scale_color_manual(values = COLONIST_COLORS, guide = "none") +
+    scale_x_continuous(expand = expansion(mult = c(0.02, 0.25)),
+                       breaks = pretty_breaks(8)) +
+    scale_y_continuous(breaks = pretty_breaks(6),
+                       limits = c(0, y_ceiling),
+                       expand = expansion(mult = c(0.02, 0))) +
+    labs(
+      title = "Cumulative resource cards received",
+      subtitle = "Cards gained from dice-roll distributions (excludes trades, robber, dev cards)",
+      x = "Completed turns", y = "Cumulative cards from rolls"
+    ) +
+    theme_colonist()
+}
+```
+
+```{r vp-timeline-tabs, results='asis', fig.height=5.6, fig.width=10.5}
+games_ordered <- d$games |> arrange(game_order)
+cat("::: {.panel-tabset}\n\n")
+for (i in seq_len(nrow(games_ordered))) {
+  g <- games_ordered[i, ]
+  cat("## Game ", g$game_order, "\n\n", sep = "")
+  cat("::: {.panel-tabset}\n\n")
+  cat("### VP timeline\n\n")
+  print(plot_vp_timeline(g$game_id))
+  cat("\n\n### Resource production\n\n")
+  print(plot_resource_timeline(g$game_id))
+  cat("\n\n:::\n\n")
+}
+cat(":::\n")
+```
+
+## Raw data
+
+Frames in scope as `d$<name>`: `games`, `rosters`, `standings`,
+`activity_stats`, `dice_histogram`, `events`, `dice_rolls`, `trade_offers`,
+`trades_accepted`, `bank_trades`, `builds`, `resource_gains`, `steals`,
+`dev_cards`, `achievements`, `tiles`, `corners`, `settlement_placements`,
+`settlement_tiles`, `player_stats`.

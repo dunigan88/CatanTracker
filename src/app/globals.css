@@ -1,26 +1,198 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+
+  /* Catan-inspired palette */
+  --catan-wood: #517d19;
+  --catan-brick: #9c4300;
+  --catan-wheat: #f0ad00;
+  --catan-ore: #7b6f83;
+  --catan-blue: #4fa6eb;
+
+  --background: #fbf5e4;        /* warm parchment body */
+  --foreground: #2a241c;        /* warm near-black */
+  --muted: #6b5f4e;             /* warm muted */
+  --card: #ffffff;              /* crisp white cards pop against parchment */
+  --card-border: #e5dcc2;       /* soft tan border */
+  --card-border-strong: #b6a98b;
+
+  --accent: #4fa6eb;            /* primary chrome = sky blue */
+  --accent-dim: #2770a8;
+  --accent-soft: #e4f1fb;
+
+  --accent-alt: #517d19;        /* secondary = forest green */
+  --accent-alt-soft: #ebf1dd;
+  --accent-alt-dim: #3c5e13;
+
+  --highlight: #9c4300;         /* alerts, red-number emphasis */
+  --highlight-soft: #f9ecdd;
+
+  --gold: #f0ad00;              /* winner / first-place */
+  --gold-soft: #fdf3d6;
+
+  --win: #16a34a;
+  --loss: #dc2626;
+  --chart-grid: #ede2c6;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-card: var(--card);
+  --color-card-border: var(--card-border);
+  --color-card-border-strong: var(--card-border-strong);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-alt: var(--accent-alt);
+  --color-accent-alt-soft: var(--accent-alt-soft);
+  --color-accent-alt-dim: var(--accent-alt-dim);
+  --color-highlight: var(--highlight);
+  --color-highlight-soft: var(--highlight-soft);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-win: var(--win);
+  --color-loss: var(--loss);
+  --color-catan-wood: var(--catan-wood);
+  --color-catan-brick: var(--catan-brick);
+  --color-catan-wheat: var(--catan-wheat);
+  --color-catan-ore: var(--catan-ore);
+  --color-catan-blue: var(--catan-blue);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--background);
+  color: var(--foreground);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Decorative bar under the header — green + gold + blue + brick stripe */
+.brand-stripe {
+  height: 4px;
+  background: linear-gradient(90deg,
+    var(--catan-wood) 0%, var(--catan-wood) 28%,
+    var(--catan-wheat) 28%, var(--catan-wheat) 52%,
+    var(--catan-blue) 52%, var(--catan-blue) 78%,
+    var(--catan-brick) 78%, var(--catan-brick) 100%);
+}
+
+/* Colored pills — colorful rounded buttons used throughout */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.95rem;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--pill-bg);
+  border: 2px solid rgba(0, 0, 0, 0.14);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.08), 0 0 0 3px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 160ms ease, opacity 160ms ease;
+  letter-spacing: 0.01em;
+  font-weight: 800;
+  cursor: pointer;
+  user-select: none;
+}
+.pill:hover {
+  background: var(--pill-hover, var(--pill-bg));
+  transform: translateY(-2px);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.16), 0 0 0 3px rgba(0, 0, 0, 0.10);
+}
+.pill:active {
+  transform: translateY(0px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+}
+
+/* "Inactive" version — still its own color (like the header nav pills),
+   just a little less emphatic than the active one. */
+.pill-ghost {
+  background: var(--pill-bg);
+  color: #ffffff;
+  border-color: rgba(0, 0, 0, 0.10);
+  opacity: 0.6;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+}
+.pill-ghost:hover {
+  background: var(--pill-hover, var(--pill-bg));
+  opacity: 0.85;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.10);
+}
+
+/* The existing header nav uses .nav-pill — alias to .pill styling */
+.nav-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 0.95rem;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--pill-bg);
+  border: 2px solid rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.08);
+  font-weight: 800;
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 160ms ease;
+}
+.nav-pill:hover {
+  background: var(--pill-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.12);
+}
+.nav-pill:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Sequential "road being built" reveal — the image uncovers left-to-right
+   in discrete jumps so it feels like individual road pieces snapping in. */
+@keyframes road-build {
+  from { clip-path: inset(0 100% 0 0); }
+  to   { clip-path: inset(0 0% 0 0); }
+}
+.road-build {
+  animation: road-build 2s steps(8, end) both;
+  animation-delay: 0.6s;
+  will-change: clip-path;
+}
+
+/* Page-level enter animation — runs on every navigation */
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+.page-enter {
+  animation: page-enter 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Title fades/lifts in slightly after the road finishes drawing */
+@keyframes hero-title-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.hero-title-in {
+  animation: hero-title-in 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: 0s;
 }
