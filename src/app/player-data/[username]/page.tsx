@@ -289,7 +289,8 @@ function AnimatedDot({
       r={4}
       fill={d.color}
       stroke="#1a2332"
-      strokeWidth={0.6}
+      strokeWidth={1}
+      shapeRendering="geometricPrecision"
       initial={{ cx: d.positions[0].x, cy: d.positions[0].y, opacity: d.positions[0].opacity }}
       animate={{ cx: target.x, cy: target.y, opacity: target.opacity }}
       transition={{ duration: 4.0, ease: [0.2, 0.8, 0.2, 1] }}
