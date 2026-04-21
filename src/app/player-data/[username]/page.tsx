@@ -143,6 +143,15 @@ function ProfileScroll({ player }: { player: Totals }) {
                 <div className="text-base md:text-lg font-semibold text-black leading-snug">
                   {c.body}
                 </div>
+                {i === 0 && (
+                  <div
+                    className="mt-5 text-xs font-extrabold tracking-wider uppercase flex items-center gap-1.5"
+                    style={{ color: "rgba(0,0,0,0.55)" }}
+                  >
+                    Scroll down for more
+                    <span aria-hidden>↓</span>
+                  </div>
+                )}
               </div>
             </section>
           ))}
