@@ -285,8 +285,12 @@ vp_flag <- function(vps, key) {
 }
 achievement_flags <- d$standings |>
   mutate(
-    had_longest_road = map_int(vp_breakdown, ~ vp_flag(.x, 3)),
-    had_largest_army = map_int(vp_breakdown, ~ vp_flag(.x, 4))
+    # Verified empirically against mechanicLongestRoadState and knight
+    # plays (cardEnum 11): vp_breakdown key 3 = Largest Army, key 4 =
+    # Longest Road. (The original VP_TYPE_WEIGHTS comment had these
+    # swapped — do not trust it for achievement identification.)
+    had_largest_army = map_int(vp_breakdown, ~ vp_flag(.x, 3)),
+    had_longest_road = map_int(vp_breakdown, ~ vp_flag(.x, 4))
   ) |>
   select(game_id, player_color, had_longest_road, had_largest_army)
 

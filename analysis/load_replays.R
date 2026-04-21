@@ -719,12 +719,13 @@ dev_cards_bought <- function(events) {
 }
 
 # Weights for Colonist victoryPointsState entries. Verified against 23
-# winners' endGameState sums vs gameSettings.victoryPointsToWin.
+# winners' endGameState sums vs gameSettings.victoryPointsToWin, and
+# against mechanicLongestRoadState / knight plays for the achievements:
 #   0 = settlements        (1 VP each)
 #   1 = cities             (2 VP each)
 #   2 = VP dev cards       (1 VP each; hidden from other players in their replays)
-#   3 = longest road       (2 VP total)
-#   4 = largest army       (2 VP total)
+#   3 = largest army       (2 VP total)
+#   4 = longest road       (2 VP total)
 VP_TYPE_WEIGHTS <- c("0" = 1L, "1" = 2L, "2" = 1L, "3" = 2L, "4" = 2L)
 
 vp_weighted_sum <- function(vps) {
