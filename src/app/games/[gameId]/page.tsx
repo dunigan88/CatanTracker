@@ -466,16 +466,16 @@ function HeaderStat({
       <div className="text-xs uppercase tracking-wide font-bold text-muted">
         {label}
       </div>
-      <div className="mt-1 flex items-center gap-2">
+      <div className="mt-1 flex items-center gap-1.5">
         <span
-          className="inline-block w-3 h-3 rounded-full border border-black/40"
+          className="inline-block w-2.5 h-2.5 rounded-full border border-black/40"
           style={{ background: color }}
         />
-        <span className="text-xl md:text-2xl font-extrabold" style={{ color }}>
+        <span className="text-sm md:text-base font-extrabold" style={{ color }}>
           {name}
         </span>
         <span
-          className="text-xl md:text-2xl font-extrabold"
+          className="text-sm md:text-base font-extrabold"
           style={{ color: valueColor ?? "#000" }}
         >
           · {value}
